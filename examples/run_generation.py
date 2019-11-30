@@ -26,7 +26,7 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 
-from transformers import GPT2Config, OpenAIGPTConfig, XLNetConfig, TransfoXLConfig, XLMConfig, CTRLConfig
+from transformers import GPT2Config, OpenAIGPTConfig, XLNetConfig, TransfoXLConfig, XLMConfig, CTRLConfig, BertConfig
 
 from transformers import GPT2LMHeadModel, GPT2Tokenizer
 from transformers import OpenAIGPTLMHeadModel, OpenAIGPTTokenizer
@@ -34,6 +34,7 @@ from transformers import XLNetLMHeadModel, XLNetTokenizer
 from transformers import TransfoXLLMHeadModel, TransfoXLTokenizer
 from transformers import CTRLLMHeadModel, CTRLTokenizer
 from transformers import XLMWithLMHeadModel, XLMTokenizer
+from transformers import BertForMaskedLM, BertTokenizer
 
 
 logging.basicConfig(format = '%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
@@ -43,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 MAX_LENGTH = int(10000)  # Hardcoded max length to avoid infinite loop
 
-ALL_MODELS = sum((tuple(conf.pretrained_config_archive_map.keys()) for conf in (GPT2Config, OpenAIGPTConfig, XLNetConfig, TransfoXLConfig, XLMConfig, CTRLConfig)), ())
+ALL_MODELS = sum((tuple(conf.pretrained_config_archive_map.keys()) for conf in (GPT2Config, OpenAIGPTConfig, XLNetConfig, TransfoXLConfig, XLMConfig, CTRLConfig, BertConfig)), ())
 
 MODEL_CLASSES = {
     'gpt2': (GPT2LMHeadModel, GPT2Tokenizer),
@@ -52,22 +53,23 @@ MODEL_CLASSES = {
     'xlnet': (XLNetLMHeadModel, XLNetTokenizer),
     'transfo-xl': (TransfoXLLMHeadModel, TransfoXLTokenizer),
     'xlm': (XLMWithLMHeadModel, XLMTokenizer),
+    'bert': (BertForMaskedLM, BertTokenizer),
 }
 
 # Padding text to help Transformer-XL and XLNet with short prompts as proposed by Aman Rusia
 # in https://github.com/rusiaaman/XLNet-gen#methodology
 # and https://medium.com/@amanrusia/xlnet-speaks-comparison-to-gpt-2-ea1a4e9ba39e
-PADDING_TEXT = """ In 1991, the remains of Russian Tsar Nicholas II and his family
-(except for Alexei and Maria) are discovered.
-The voice of Nicholas's young son, Tsarevich Alexei Nikolaevich, narrates the
-remainder of the story. 1883 Western Siberia,
-a young Grigori Rasputin is asked by his father and a group of men to perform magic.
-Rasputin has a vision and denounces one of the men as a horse thief. Although his
-father initially slaps him for making such an accusation, Rasputin watches as the
-man is chased outside and beaten. Twenty years later, Rasputin sees a vision of
-the Virgin Mary, prompting him to become a priest. Rasputin quickly becomes famous,
-with people, even a bishop, begging for his blessing. <eod> </s> <eos>"""
-
+# PADDING_TEXT = """ In 1991, the remains of Russian Tsar Nicholas II and his family
+# (except for Alexei and Maria) are discovered.
+# The voice of Nicholas's young son, Tsarevich Alexei Nikolaevich, narrates the
+# remainder of the story. 1883 Western Siberia,
+# a young Grigori Rasputin is asked by his father and a group of men to perform magic.
+# Rasputin has a vision and denounces one of the men as a horse thief. Although his
+# father initially slaps him for making such an accusation, Rasputin watches as the
+# man is chased outside and beaten. Twenty years later, Rasputin sees a vision of
+# the Virgin Mary, prompting him to become a priest. Rasputin quickly becomes famous,
+# with people, even a bishop, begging for his blessing. <eod> </s> <eos>"""
+PADDING_TEXT = ""
 
 def set_seed(args):
     np.random.seed(args.seed)
@@ -112,6 +114,7 @@ def sample_sequence(model, length, context, num_samples=1, temperature=1, top_k=
     context = torch.tensor(context, dtype=torch.long, device=device)
     context = context.unsqueeze(0).repeat(num_samples, 1)
     generated = context
+    debug = 0
     with torch.no_grad():
         for _ in trange(length):
 
@@ -138,17 +141,29 @@ def sample_sequence(model, length, context, num_samples=1, temperature=1, top_k=
             outputs = model(**inputs)  # Note: we could also use 'past' with GPT-2/Transfo-XL/XLNet/CTRL (cached hidden-states)
             next_token_logits = outputs[0][:, -1, :] / (temperature if temperature > 0 else 1.)
 
+            # if debug <= 2:
+            #     print()
+            #     print(outputs[0].size())
+            #     print(inputs['input_ids'])
+            #     debug += 1
+                # print(next_token_logits)
+
             # repetition penalty from CTRL (https://arxiv.org/abs/1909.05858)
-            for i in range(num_samples):
-                for _ in set(generated[i].tolist()):
-                    next_token_logits[i, _] /= repetition_penalty
+            # for i in range(num_samples):
+            #     for _ in set(generated[i].tolist()):
+            #         # print("%s, %s" % (i, _))
+            #         next_token_logits[i, _] /= repetition_penalty
                 
-            filtered_logits = top_k_top_p_filtering(next_token_logits, top_k=top_k, top_p=top_p)
-            if temperature == 0: # greedy sampling:
-                next_token = torch.argmax(filtered_logits, dim=-1).unsqueeze(-1)
-            else:
-                next_token = torch.multinomial(F.softmax(filtered_logits, dim=-1), num_samples=1)
+            # filtered_logits = top_k_top_p_filtering(next_token_logits, top_k=top_k, top_p=top_p)
+            # if temperature == 0: # greedy sampling:
+            #     next_token = torch.argmax(filtered_logits, dim=-1).unsqueeze(-1)
+            # else:
+            #     next_token = torch.multinomial(F.softmax(filtered_logits, dim=-1), num_samples=1)
+            next_token = torch.multinomial(F.softmax(next_token_logits, dim=-1), num_samples=1)
             generated = torch.cat((generated, next_token), dim=1)
+            # if debug <= 2:
+            #     print(generated)
+                
     return generated
 
 
@@ -178,6 +193,7 @@ def main():
     args = parser.parse_args()
 
     args.device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
+    print(torch.cuda.is_available())
     args.n_gpu = torch.cuda.device_count()
 
     set_seed(args)
@@ -214,9 +230,10 @@ def main():
                     language = input("Using XLM. Select language in " + str(list(tokenizer.lang2id.keys())) + " >>> ")
             xlm_lang = tokenizer.lang2id[language]
 
-        # XLM masked-language modeling (MLM) models need masked token (see details in sample_sequence)
+        # masked-language modeling (MLM) models need masked token (see details in sample_sequence)
         is_xlm_mlm = args.model_type in ["xlm"] and 'mlm' in args.model_name_or_path
-        if is_xlm_mlm:
+        is_mlm = is_xlm_mlm or args.model_type in ["bert"]
+        if is_mlm:
             xlm_mask_token = tokenizer.mask_token_id
         else:
             xlm_mask_token = None
@@ -239,12 +256,13 @@ def main():
             top_p=args.top_p,
             repetition_penalty=args.repetition_penalty,
             is_xlnet=bool(args.model_type == "xlnet"),
-            is_xlm_mlm=is_xlm_mlm,
+            is_xlm_mlm=is_mlm,
             xlm_mask_token=xlm_mask_token,
             xlm_lang=xlm_lang,
             device=args.device,
         )
-        out = out[:, len(context_tokens):].tolist()
+        # out = out[:, len(context_tokens):].tolist()
+        out = out[:, :].tolist()
         for o in out:
             text = tokenizer.decode(o, clean_up_tokenization_spaces=True)
             text = text[: text.find(args.stop_token) if args.stop_token else None]
