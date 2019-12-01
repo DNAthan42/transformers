@@ -10,9 +10,15 @@ def read_all(root, ham_only=False):
     out_path = root + "/out"
     if not os.path.exists(out_path):
         os.mkdir(out_path)
+    if not os.path.exists(out_path + "/ham"):
+        os.mkdir(out_path +"/ham")
+    if not os.path.exists(out_path + "/spam"):
+        os.mkdir(out_path +"/spam")
 
     spam_c = 0
     ham_c = 0
+
+    err_c = 0
 
     with open(root + "/full/index", 'r') as index:
 
@@ -20,24 +26,39 @@ def read_all(root, ham_only=False):
         for c in trange(rawgencount(root + "/full/index")):
             iline = index.readline()
             (label, msg_path) = iline.split(" ..", 1)
-            if label == 'spam':
+            if label == 'spam' and ham_only:
+                continue
                 spam_c += 1
                 if ham_only:
                     continue
             else:
                 ham_c += 1
 
-            with open(root + msg_path.strip(), 'r') as msg:
-                try:
-                    _, body = msg.read().split('\n\n', 1) # strip the header info
-                except ValueError:
-                    continue
+            try:
+                with open(root + msg_path.strip(), 'r') as msg:
+                    try:
+                        _, body = msg.read().split('\n\n', 1) # strip the header info
+                    except ValueError:
+                        err_c += 1
+                        continue
+            except FileNotFoundError:
+                err_c += 1
+                continue
+            except OSError:
+                err_c += 1
+                continue
+                
             
-            with open(out_path + f"/{counter:06d}.{label}", 'w+') as fout:
+            with open(out_path + f"/{label}/{counter:06d}", 'w+') as fout:
                 fout.write(body)
                 counter += 1
 
-    print(f"Ham: {ham_c}\nSpam: {spam_c}")
+            if label == "spam":
+                spam_c += 1
+            else:
+                ham_c += 1
+
+    print(f"Ham: {ham_c}\nSpam: {spam_c}\nErr: {err_c}")
 
         
 

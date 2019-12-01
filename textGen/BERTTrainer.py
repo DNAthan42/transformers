@@ -7,8 +7,9 @@ import numpy as np
 import datetime
 import time
 
-from transformers import TransfoXLConfig, TransfoXLLMHeadModel, TransfoXLTokenizer
-from transformers import GPT2Config, GPT2LMHeadModel, GPT2Tokenizer
+# from transformers import TransfoXLConfig, TransfoXLLMHeadModel, TransfoXLTokenizer
+# from transformers import GPT2Config, GPT2LMHeadModel, GPT2Tokenizer
+from transformers import BertForSequenceClassification, BertTokenizer
 
 num_padded = 0
 num_equal = 0
@@ -103,7 +104,7 @@ def train(datapath, outpath, seed, batch_size, epochs, save_steps, use_gpt, use_
             model.train()
             outputs = model(input_ids=inputs, labels=labels)
 
-            if not use_gpt:
+            if use_gpt:
                 # loss returned from transfoXL was broken
                 first_pad = get_first_occ(inputs[0], -1)
                 loss = outputs[0][0][:first_pad].mean()
