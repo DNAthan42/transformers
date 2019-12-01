@@ -890,6 +890,7 @@ class TransfoXLLMHeadModel(TransfoXLPreTrainedModel):
         last_hidden = transformer_outputs[0]
         pred_hid = last_hidden[:, -tgt_len:]
         outputs = transformer_outputs[1:]
+        print("super sane")
         if self.sample_softmax > 0 and self.training:
             assert self.config.tie_weight
             logit = sample_logits(self.transformer.word_emb, self.out_layer.bias, labels, pred_hid, self.sampler)
@@ -899,11 +900,13 @@ class TransfoXLLMHeadModel(TransfoXLPreTrainedModel):
                 # TODO: This is not implemented
                 raise NotImplementedError
         else:
+            print("sanity check")
             softmax_output = self.crit(pred_hid.view(-1, pred_hid.size(-1)), labels)
             if labels is None:
                 softmax_output = softmax_output.view(bsz, tgt_len, -1)
                 outputs = [softmax_output] + outputs
             else:
+                print("double sane")
                 softmax_output = softmax_output.view(bsz, tgt_len)
                 outputs = [softmax_output, None] + outputs
 

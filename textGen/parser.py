@@ -27,13 +27,13 @@ def read_all(root, ham_only=False):
             else:
                 ham_c += 1
 
-            with open(root + msg_path.strip(), 'rb') as msg:
+            with open(root + msg_path.strip(), 'r') as msg:
                 try:
-                    _, body = msg.read().split(b'\n\n', 1) # strip the header info
+                    _, body = msg.read().split('\n\n', 1) # strip the header info
                 except ValueError:
                     continue
             
-            with open(out_path + f"/{counter:06d}.{label}", 'wb+') as fout:
+            with open(out_path + f"/{counter:06d}.{label}", 'w+') as fout:
                 fout.write(body)
                 counter += 1
 
