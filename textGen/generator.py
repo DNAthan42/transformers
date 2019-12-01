@@ -35,9 +35,10 @@ def generate(prompt, seed = 11122233, length = 150, use_cuda = True):
 
     with torch.no_grad():
         for _ in trange(length):
-            inputs = {'input_ids': text_tensor}
+            inputs = {'input_ids': text_tensor} #copying example code because it works
             outputs = model(**inputs)
             next_token_logits = outputs[0][:,-1,:]
+            # pick one token from logit scores.
             next_token = torch.multinomial(F.softmax(next_token_logits, dim=-1), num_samples=1)
             text_tensor = torch.cat((text_tensor, next_token), dim=1)
 
