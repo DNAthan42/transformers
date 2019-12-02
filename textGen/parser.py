@@ -28,11 +28,6 @@ def read_all(root, ham_only=False):
             (label, msg_path) = iline.split(" ..", 1)
             if label == 'spam' and ham_only:
                 continue
-                spam_c += 1
-                if ham_only:
-                    continue
-            else:
-                ham_c += 1
 
             try:
                 with open(root + msg_path.strip(), 'r') as msg:

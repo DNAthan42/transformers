@@ -6,14 +6,52 @@ import torch.nn.functional as F
 import numpy as np
 import datetime
 import time
+from shutil import copyfile
 
-# from transformers import TransfoXLConfig, TransfoXLLMHeadModel, TransfoXLTokenizer
-# from transformers import GPT2Config, GPT2LMHeadModel, GPT2Tokenizer
+from transformers import TransfoXLConfig, TransfoXLLMHeadModel, TransfoXLTokenizer
+from transformers import GPT2Config, GPT2LMHeadModel, GPT2Tokenizer
 from transformers import BertForSequenceClassification, BertTokenizer
 
 num_padded = 0
 num_equal = 0
 num_truncated = 0
+
+def split_data(datapath):
+    datapath = fixpath(datapath)
+    if not os.path.exists(datapath + 'ham') or not os.path.exists(datapath + 'spam'):
+        raise ValueError("Not a valid spam directory")
+    
+    #plan is 80:20 train:test
+    # and then 80:20 within train for train:validate
+    # so get the test first, then split train
+    if not os.path.exists(datapath + 'test'):
+        os.mkdir(datapath + 'test')
+    if not os.path.exists(datapath + 'train'):
+        os.mkdir(datapath + 'train')
+    if not os.path.exists(datapath + 'dev'):
+        os.mkdir(datapath + 'dev')
+    
+    spamdir = os.listdir(datapath + 'spam')
+    spamcount = len(spamdir)
+    hamdir = os.listdir(datapath + 'ham')
+    hamcount = len(hamdir)
+    for i in trange(int(spamcount/5), desc='test-spam'):
+        copyfile(datapath + 'spam/' + spamdir[i], datapath + 'test/' + spamdir[i]+'.spam')
+    for i in trange(int(hamcount/5), desc='test-ham '):
+        copyfile(datapath + 'ham/' + hamdir[i], datapath + 'test/' + hamdir[i]+'.ham')
+
+    #now get train and split 80:20 (ie every fifth goes to dev)
+    for i in tqdm(range(int(spamcount/5), spamcount), desc='train-spam'):
+        if i % 5 == 0:
+            copyfile(datapath + 'spam/' + spamdir[i], datapath + 'dev/' + spamdir[i]+'.spam')
+        else:
+            copyfile(datapath + 'spam/' + spamdir[i], datapath + 'train/' + spamdir[i]+'.spam')
+
+    for i in tqdm(range(int(hamcount/5), hamcount), desc='train-ham'):
+        if i % 5 == 0:
+            copyfile(datapath + 'ham/' + hamdir[i], datapath + 'dev/' + hamdir[i]+'.ham')
+        else:
+            copyfile(datapath + 'ham/' + hamdir[i], datapath + 'train/' + hamdir[i]+'.ham')
 
 def get_first_occ(list, val):
     for i in range(len(list)):
@@ -37,7 +75,7 @@ def getMessage(path, tokenizer, pad = False):
     global num_truncated
 
     with open(path, 'r') as msg:
-        tokens = tokenizer.encode(msg.read(), add_special_tokens=False, max_length=512)
+        tokens = tokenizer.encode(msg.read(), add_special_tokens=True, max_length=512)
         if pad:
             count = len(tokens)
             if count < 512:
@@ -48,7 +86,15 @@ def getMessage(path, tokenizer, pad = False):
             else:
                 num_truncated += 1
     
-    return tokens
+    #label
+    if path.endswith('spam'):
+        label = 1
+    elif path.endswith('ham'):
+        label = 0
+    else:
+        raise ValueError(f"Invalid class for file {path}")
+
+    return tokens, label
 
 
 def getBatch(datapath, batch_size, tokenizer):
@@ -57,26 +103,29 @@ def getBatch(datapath, batch_size, tokenizer):
     batch_l = []
     files = os.listdir(datapath)
     for f in files:
-        batch_l += [getMessage(datapath + f, tokenizer, batch_size != 1)]
+        tokens, label = getMessage(datapath + f, tokenizer, batch_size != 1)
+        batch_l += [tokens]
         count += 1
         if count % batch_size == 0:
-            yield batch_l
+            yield batch_l, label
             batch_l = []
         
             
 
-def train(datapath, outpath, seed, batch_size, epochs, save_steps, use_gpt, use_cuda = True):
+def train(datapath, outpath, seed, batch_size, epochs, save_steps, use_cuda = True):
     #set up model and device (hopefully cuda)
     device = torch.device("cuda" if torch.cuda.is_available() and use_cuda else "cpu")
 
-    if use_gpt:
-        model = GPT2LMHeadModel.from_pretrained('gpt2')
-        tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
-    else:
-        model = TransfoXLLMHeadModel.from_pretrained('transfo-xl-wt103')
-        tokenizer = TransfoXLTokenizer.from_pretrained('transfo-xl-wt103')
+    # if use_gpt:
+    #     model = GPT2LMHeadModel.from_pretrained('gpt2')
+    #     tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
+    # else:
+    #     model = TransfoXLLMHeadModel.from_pretrained('transfo-xl-wt103')
+    #     tokenizer = TransfoXLTokenizer.from_pretrained('transfo-xl-wt103')
+    model = BertForSequenceClassification.from_pretrained('bert-base-uncased')
+    tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
     model.to(device)
-    optimizer = torch.optim.Adam(model.parameters(), betas=(.9,.98), eps=1e-09)
+    optimizer = torch.optim.Adam(model.parameters(), betas=(.9,.999), eps=2e-05)
     
     #setup rng seeds on all devices to ensure repeatable results
     np.random.seed(seed)
@@ -95,8 +144,9 @@ def train(datapath, outpath, seed, batch_size, epochs, save_steps, use_gpt, use_
     for _ in trange(epochs, desc="Epochs"):
         for batch_num in tqdm(range(0,int(num_batches), batch_size), desc="Batches"):
             #setup this batch.
-            batch = torch.tensor(next(batch_list), dtype=torch.long, device=device)
-            inputs, labels = batch, batch
+            batch, label = next(batch_list)
+            inputs = torch.tensor(batch, dtype=torch.long, device=device)
+            labels = torch.tensor(label, dtype=torch.long, device=device)
             inputs = inputs.to(device)
             labels = labels.to(device)
 
@@ -104,10 +154,10 @@ def train(datapath, outpath, seed, batch_size, epochs, save_steps, use_gpt, use_
             model.train()
             outputs = model(input_ids=inputs, labels=labels)
 
-            if use_gpt:
-                # loss returned from transfoXL was broken
-                first_pad = get_first_occ(inputs[0], -1)
-                loss = outputs[0][0][:first_pad].mean()
+            # if not use_gpt:
+            #     # loss returned from transfoXL was broken
+            #     first_pad = get_first_occ(inputs[0], -1)
+            #     loss = outputs[0][0][:first_pad].mean()
 
             loss = outputs[0]
             avg_loss += loss
@@ -145,7 +195,7 @@ def main():
     parser.add_argument("--seed", type=int, default = 11122233, 
     help="RNG seed to make results reproducable")
 
-    parser.add_argument("--gpt2", action='store_true')
+    # parser.add_argument("--gpt2", action='store_true')
 
     parser.add_argument("--batch_size", type=int, required=True)
 
@@ -164,7 +214,8 @@ def main():
     if not os.path.exists(args.outpath):
         os.mkdir(args.outpath)
 
-    train(args.datapath, args.outpath, args.seed, args.batch_size, args.epochs, args.save_steps, args.gpt2, not args.no_cuda)
+    # split_data(args.datapath)
+    train(args.datapath, args.outpath, args.seed, args.batch_size, args.epochs, args.save_steps, not args.no_cuda)
 
 
 if __name__ == "__main__":
