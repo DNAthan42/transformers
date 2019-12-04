@@ -61,7 +61,7 @@ def get_first_occ(list, val):
     return -1
 
 def select(probs):
-    return torch.multinomial(F.softmax(probs), 1).numpy()
+    return torch.multinomial(F.softmax(probs), 1).cpu().numpy()[0][0]
 
 def fixpath(path):
     path_end = path[-1]
@@ -227,33 +227,40 @@ def evaluate(args):
     T1 = 0
     T2 = 0
 
-    # for _ in trange(len(os.listdir(datapath))):
-    batch_list = getBatch(args.datapath, 1, tokenizer)
+    for _ in trange(len(os.listdir(datapath))):
+        batch_list = getBatch(args.datapath, 1, tokenizer)
 
-    batch, labels, masks = next(batch_list)
-    inputs = torch.tensor(batch, dtype=torch.long, device=device)
-    labels = torch.tensor(labels, dtype=torch.long, device=device)
-    masks = torch.tensor(masks, dtype=torch.long, device=device)
-    inputs = inputs.to(device)
-    labels = labels.to(device)
-    masks = masks.to(device)
+        batch, labels, masks = next(batch_list)
+        inputs = torch.tensor(batch, dtype=torch.long, device=device)
+        labels = torch.tensor(labels, dtype=torch.long, device=device)
+        masks = torch.tensor(masks, dtype=torch.long, device=device)
+        inputs = inputs.to(device)
+        labels = labels.to(device)
+        masks = masks.to(device)
 
-    with torch.no_grad():
-        model.eval()
-        outputs = model(inputs)
-        loss = outputs[0]
-        # check for errors
-        # if labels[0] == 0: # expect ham
-        #     if loss == 0:
-        #         TP += 1
-        #     else:
-        #         T2 += 1
-        # if 
+        with torch.no_grad():
+            model.eval()
+            outputs = model(inputs)
+            loss = select(outputs[0])
 
-        print(select(loss))
+            # check for errors
+            if labels[0] == 0: # expect ham
+                if loss == 0:
+                    TP += 1
+                else:
+                    T2 += 1
+            if labels[0] == 1: # expect spam
+                if loss == 1:
+                    TN += 1
+                else
+                    T1 += 1
 
-        print(f"expected : produced -- {labels[0]} : {loss}")
-        # print("message:\n" + tokenizer.decode(inputs[0].tolist()))
+            print(select(loss))
+
+            print(f"expected : produced -- {labels[0]} : {loss}")
+            # print("message:\n" + tokenizer.decode(inputs[0].tolist()))
+    
+    print(f"TP: {TP}\tTN:{TN}\tT1: {T1}\tT2: {T2}")
 
 
 def main():
