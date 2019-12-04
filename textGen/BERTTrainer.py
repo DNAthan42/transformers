@@ -101,6 +101,8 @@ def getMessage(path, tokenizer, pad = False):
     else:
         raise ValueError(f"Invalid class for file {path}")
 
+    print(tokenizer.decode(tokens))
+
     return tokens, label, mask
 
 
@@ -207,13 +209,13 @@ def evaluate(args):
     device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
 
     if args.cont:
+        print(args.cont_path)
         model = BertForSequenceClassification.from_pretrained(args.cont_path)
         tokenizer = BertTokenizer.from_pretrained(args.cont_path)
     else:
         model = BertForSequenceClassification.from_pretrained('bert-base-uncased')
         tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
     model.to(device)
-    model.eval()
 
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -230,10 +232,11 @@ def evaluate(args):
     masks = masks.to(device)
 
     with torch.no_grad():
+        model.eval()
         outputs = model(inputs)
         loss = outputs[0]
         print(f"expected: {labels[0]}\tproduced: {loss}")
-        print("message:\n" + tokenizer.decode(inputs[0]))
+        # print("message:\n" + tokenizer.decode(inputs[0].tolist()))
 
 
 def main():
