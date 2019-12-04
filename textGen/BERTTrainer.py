@@ -60,6 +60,9 @@ def get_first_occ(list, val):
 
     return -1
 
+def select(probs):
+    return torch.multinomial(F.softmax(probs), 1).numpy()
+
 def fixpath(path):
     path_end = path[-1]
     if path_end != "\\" or path_end != "/":
@@ -100,8 +103,6 @@ def getMessage(path, tokenizer, pad = False):
         label = 0
     else:
         raise ValueError(f"Invalid class for file {path}")
-
-    print(tokenizer.decode(tokens))
 
     return tokens, label, mask
 
@@ -221,6 +222,12 @@ def evaluate(args):
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
 
+    TP = 0
+    TN = 0
+    T1 = 0
+    T2 = 0
+
+    # for _ in trange(len(os.listdir(datapath))):
     batch_list = getBatch(args.datapath, 1, tokenizer)
 
     batch, labels, masks = next(batch_list)
@@ -235,7 +242,17 @@ def evaluate(args):
         model.eval()
         outputs = model(inputs)
         loss = outputs[0]
-        print(f"expected: {labels[0]}\tproduced: {loss}")
+        # check for errors
+        # if labels[0] == 0: # expect ham
+        #     if loss == 0:
+        #         TP += 1
+        #     else:
+        #         T2 += 1
+        # if 
+
+        print(select(loss))
+
+        print(f"expected : produced -- {labels[0]} : {loss}")
         # print("message:\n" + tokenizer.decode(inputs[0].tolist()))
 
 
