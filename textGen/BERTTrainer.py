@@ -75,12 +75,19 @@ def getMessage(path, tokenizer, pad = False):
     global num_truncated
 
     with open(path, 'r') as msg:
-        tokens = tokenizer.encode(msg.read(), add_special_tokens=True, max_length=512)
+        # tokens = tokenizer.encode(msg.read(), add_special_tokens=True, max_length=512)
+        tokens = tokenizer.encode(msg.read(), add_special_tokens=True)
+        tokens = tokens[:512]
+        mask = [1] * 512
         if pad:
             count = len(tokens)
             if count < 512:
                 num_padded += 1
-                tokens += [-1] * (512 - count)
+                #make the padding
+                tokens += [0] * (512 - count)
+                #make the padding
+                mask =  mask[:count] + [0] * (512 - count)
+
             elif count == 512:
                 num_equal += 1
             else:
@@ -94,25 +101,31 @@ def getMessage(path, tokenizer, pad = False):
     else:
         raise ValueError(f"Invalid class for file {path}")
 
-    return tokens, label
+    return tokens, label, mask
 
 
 def getBatch(datapath, batch_size, tokenizer):
     datapath = fixpath(datapath)
     count = 0
     batch_l = []
+    label_l = []
+    pad_s_l = []
     files = os.listdir(datapath)
     for f in files:
-        tokens, label = getMessage(datapath + f, tokenizer, batch_size != 1)
+        tokens, label, pad_start = getMessage(datapath + f, tokenizer, batch_size != 1)
         batch_l += [tokens]
+        label_l += [label]
+        pad_s_l += [pad_start]
         count += 1
         if count % batch_size == 0:
-            yield batch_l, label
+            yield batch_l, label_l, pad_s_l
             batch_l = []
+            label_l = []
+            pad_s_l = []
         
             
 
-def train(datapath, outpath, seed, batch_size, epochs, save_steps, use_cuda = True):
+def train(datapath, outpath, seed, batch_size, epochs, save_steps, args, use_cuda = True):
     #set up model and device (hopefully cuda)
     device = torch.device("cuda" if torch.cuda.is_available() and use_cuda else "cpu")
 
@@ -122,8 +135,12 @@ def train(datapath, outpath, seed, batch_size, epochs, save_steps, use_cuda = Tr
     # else:
     #     model = TransfoXLLMHeadModel.from_pretrained('transfo-xl-wt103')
     #     tokenizer = TransfoXLTokenizer.from_pretrained('transfo-xl-wt103')
-    model = BertForSequenceClassification.from_pretrained('bert-base-uncased')
-    tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+    if args.cont:
+        model = BertForSequenceClassification.from_pretrained(args.cont_path)
+        tokenizer = BertTokenizer.from_pretrained(args.cont_path)
+    else:
+        model = BertForSequenceClassification.from_pretrained('bert-base-uncased')
+        tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
     model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), betas=(.9,.999), eps=2e-05)
     
@@ -142,17 +159,19 @@ def train(datapath, outpath, seed, batch_size, epochs, save_steps, use_cuda = Tr
     timestamp = datetime.datetime.now().strftime('%y%m%d%H%M%S')
 
     for _ in trange(epochs, desc="Epochs"):
-        for batch_num in tqdm(range(0,int(num_batches), batch_size), desc="Batches"):
+        for batch_num in tqdm(range(0 if not args.cont else args.cont_step, int(num_batches)), desc="Batches"):
             #setup this batch.
-            batch, label = next(batch_list)
+            batch, labels, masks = next(batch_list)
             inputs = torch.tensor(batch, dtype=torch.long, device=device)
-            labels = torch.tensor(label, dtype=torch.long, device=device)
+            labels = torch.tensor(labels, dtype=torch.long, device=device)
+            masks = torch.tensor(masks, dtype=torch.long, device=device)
             inputs = inputs.to(device)
             labels = labels.to(device)
+            masks = masks.to(device)
 
             #feed input to model to train
             model.train()
-            outputs = model(input_ids=inputs, labels=labels)
+            outputs = model(input_ids=inputs, labels=labels, attention_mask=masks)
 
             # if not use_gpt:
             #     # loss returned from transfoXL was broken
@@ -167,7 +186,7 @@ def train(datapath, outpath, seed, batch_size, epochs, save_steps, use_cuda = Tr
             optimizer.step()
             model.zero_grad()
 
-            if batch_num % (batch_size * save_steps) == 0:
+            if batch_num % save_steps == 0:
                 print('CHECKPOINT')
                 checkpoint_path = f"{fixpath(outpath)}{timestamp}/e{epochs}-num{batch_num}-size{batch_size}"
                 if not os.path.exists(checkpoint_path):
@@ -195,7 +214,11 @@ def main():
     parser.add_argument("--seed", type=int, default = 11122233, 
     help="RNG seed to make results reproducable")
 
-    # parser.add_argument("--gpt2", action='store_true')
+    parser.add_argument("--cont", action='store_true')
+
+    parser.add_argument("--cont_step", type=int, default=0)
+
+    parser.add_argument("--cont_path", type=str, default="")
 
     parser.add_argument("--batch_size", type=int, required=True)
 
@@ -215,7 +238,7 @@ def main():
         os.mkdir(args.outpath)
 
     # split_data(args.datapath)
-    train(args.datapath, args.outpath, args.seed, args.batch_size, args.epochs, args.save_steps, not args.no_cuda)
+    train(args.datapath, args.outpath, args.seed, args.batch_size, args.epochs, args.save_steps, args, not args.no_cuda)
 
 
 if __name__ == "__main__":
