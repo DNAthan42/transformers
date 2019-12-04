@@ -75,19 +75,12 @@ def getMessage(path, tokenizer, pad = False):
     global num_truncated
 
     with open(path, 'r') as msg:
-        # tokens = tokenizer.encode(msg.read(), add_special_tokens=True, max_length=512)
-        tokens = tokenizer.encode(msg.read(), add_special_tokens=True)
-        tokens = tokens[:512]
-        mask = [1] * 512
+        tokens = tokenizer.encode(msg.read(), add_special_tokens=True, max_length=512)
         if pad:
             count = len(tokens)
             if count < 512:
                 num_padded += 1
-                #make the padding
-                tokens += [0] * (512 - count)
-                #make the padding
-                mask =  mask[:count] + [0] * (512 - count)
-
+                tokens += [-1] * (512 - count)
             elif count == 512:
                 num_equal += 1
             else:
@@ -101,31 +94,25 @@ def getMessage(path, tokenizer, pad = False):
     else:
         raise ValueError(f"Invalid class for file {path}")
 
-    return tokens, label, mask
+    return tokens, label
 
 
 def getBatch(datapath, batch_size, tokenizer):
     datapath = fixpath(datapath)
     count = 0
     batch_l = []
-    label_l = []
-    pad_s_l = []
     files = os.listdir(datapath)
     for f in files:
-        tokens, label, pad_start = getMessage(datapath + f, tokenizer, batch_size != 1)
+        tokens, label = getMessage(datapath + f, tokenizer, batch_size != 1)
         batch_l += [tokens]
-        label_l += [label]
-        pad_s_l += [pad_start]
         count += 1
         if count % batch_size == 0:
-            yield batch_l, label_l, pad_s_l
+            yield batch_l, label
             batch_l = []
-            label_l = []
-            pad_s_l = []
         
             
 
-def train(datapath, outpath, seed, batch_size, epochs, save_steps, args, use_cuda = True):
+def train(datapath, outpath, seed, batch_size, epochs, save_steps, use_cuda = True):
     #set up model and device (hopefully cuda)
     device = torch.device("cuda" if torch.cuda.is_available() and use_cuda else "cpu")
 
@@ -135,12 +122,8 @@ def train(datapath, outpath, seed, batch_size, epochs, save_steps, args, use_cud
     # else:
     #     model = TransfoXLLMHeadModel.from_pretrained('transfo-xl-wt103')
     #     tokenizer = TransfoXLTokenizer.from_pretrained('transfo-xl-wt103')
-    if args.cont:
-        model = BertForSequenceClassification.from_pretrained(args.cont_path)
-        tokenizer = BertTokenizer.from_pretrained(args.cont_path)
-    else:
-        model = BertForSequenceClassification.from_pretrained('bert-base-uncased')
-        tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+    model = BertForSequenceClassification.from_pretrained('bert-base-uncased')
+    tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
     model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), betas=(.9,.999), eps=2e-05)
     
@@ -159,19 +142,17 @@ def train(datapath, outpath, seed, batch_size, epochs, save_steps, args, use_cud
     timestamp = datetime.datetime.now().strftime('%y%m%d%H%M%S')
 
     for _ in trange(epochs, desc="Epochs"):
-        for batch_num in tqdm(range(0 if not args.cont else args.cont_step, int(num_batches)), desc="Batches"):
+        for batch_num in tqdm(range(0,int(num_batches), batch_size), desc="Batches"):
             #setup this batch.
-            batch, labels, masks = next(batch_list)
+            batch, label = next(batch_list)
             inputs = torch.tensor(batch, dtype=torch.long, device=device)
-            labels = torch.tensor(labels, dtype=torch.long, device=device)
-            masks = torch.tensor(masks, dtype=torch.long, device=device)
+            labels = torch.tensor(label, dtype=torch.long, device=device)
             inputs = inputs.to(device)
             labels = labels.to(device)
-            masks = masks.to(device)
 
             #feed input to model to train
             model.train()
-            outputs = model(input_ids=inputs, labels=labels, attention_mask=masks)
+            outputs = model(input_ids=inputs, labels=labels)
 
             # if not use_gpt:
             #     # loss returned from transfoXL was broken
@@ -186,7 +167,7 @@ def train(datapath, outpath, seed, batch_size, epochs, save_steps, args, use_cud
             optimizer.step()
             model.zero_grad()
 
-            if batch_num % save_steps == 0:
+            if batch_num % (batch_size * save_steps) == 0:
                 print('CHECKPOINT')
                 checkpoint_path = f"{fixpath(outpath)}{timestamp}/e{epochs}-num{batch_num}-size{batch_size}"
                 if not os.path.exists(checkpoint_path):
@@ -202,40 +183,6 @@ def train(datapath, outpath, seed, batch_size, epochs, save_steps, args, use_cud
     
     print(avg_losses)
 
-def evaluate(args):
-    #set up model and device (hopefully cuda)
-    device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
-
-    if args.cont:
-        model = BertForSequenceClassification.from_pretrained(args.cont_path)
-        tokenizer = BertTokenizer.from_pretrained(args.cont_path)
-    else:
-        model = BertForSequenceClassification.from_pretrained('bert-base-uncased')
-        tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
-    model.to(device)
-    model.eval()
-
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    torch.cuda.manual_seed_all(args.seed)
-
-    batch_list = getBatch(args.datapath, 1, tokenizer)
-
-    batch, labels, masks = next(batch_list)
-    inputs = torch.tensor(batch, dtype=torch.long, device=device)
-    labels = torch.tensor(labels, dtype=torch.long, device=device)
-    masks = torch.tensor(masks, dtype=torch.long, device=device)
-    inputs = inputs.to(device)
-    labels = labels.to(device)
-    masks = masks.to(device)
-
-    with torch.no_grad():
-        outputs = model(inputs)
-        loss = outputs[0]
-        print(f"expected: {labels[0]}\tproduced: {loss}")
-        print("message:\n" + tokenizer.decode(inputs[0]))
-
-
 def main():
     parser = argparse.ArgumentParser()
 
@@ -248,11 +195,7 @@ def main():
     parser.add_argument("--seed", type=int, default = 11122233, 
     help="RNG seed to make results reproducable")
 
-    parser.add_argument("--cont", action='store_true')
-
-    parser.add_argument("--cont_step", type=int, default=0)
-
-    parser.add_argument("--cont_path", type=str, default="")
+    # parser.add_argument("--gpt2", action='store_true')
 
     parser.add_argument("--batch_size", type=int, required=True)
 
@@ -262,23 +205,17 @@ def main():
 
     parser.add_argument("--save_steps", type=int, default=250)
 
-    parser.add_argument("--eval", action="store_true")
-
     args = parser.parse_args()
 
     # more arg checking. Make sure we can save models. Don't waste the training time
     if not os.path.exists(args.datapath):
         raise IOError ("Data path doesn't exist")
 
-    if args.eval:
-        evaluate(args)
-        return # end early, don't train after testing.
-
     if not os.path.exists(args.outpath):
         os.mkdir(args.outpath)
 
     # split_data(args.datapath)
-    train(args.datapath, args.outpath, args.seed, args.batch_size, args.epochs, args.save_steps, args, not args.no_cuda)
+    train(args.datapath, args.outpath, args.seed, args.batch_size, args.epochs, args.save_steps, not args.no_cuda)
 
 
 if __name__ == "__main__":
