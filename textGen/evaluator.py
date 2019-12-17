@@ -16,42 +16,42 @@ num_padded = 0
 num_equal = 0
 num_truncated = 0
 
-def split_data(datapath):
-    datapath = fixpath(datapath)
-    if not os.path.exists(datapath + 'ham') or not os.path.exists(datapath + 'spam'):
-        raise ValueError("Not a valid spam directory")
+# def split_data(datapath):
+#     datapath = fixpath(datapath)
+#     if not os.path.exists(datapath + 'ham') or not os.path.exists(datapath + 'spam'):
+#         raise ValueError("Not a valid spam directory")
     
-    #plan is 80:20 train:test
-    # and then 80:20 within train for train:validate
-    # so get the test first, then split train
-    if not os.path.exists(datapath + 'test'):
-        os.mkdir(datapath + 'test')
-    if not os.path.exists(datapath + 'train'):
-        os.mkdir(datapath + 'train')
-    if not os.path.exists(datapath + 'dev'):
-        os.mkdir(datapath + 'dev')
+#     #plan is 80:20 train:test
+#     # and then 80:20 within train for train:validate
+#     # so get the test first, then split train
+#     if not os.path.exists(datapath + 'test'):
+#         os.mkdir(datapath + 'test')
+#     if not os.path.exists(datapath + 'train'):
+#         os.mkdir(datapath + 'train')
+#     if not os.path.exists(datapath + 'dev'):
+#         os.mkdir(datapath + 'dev')
     
-    spamdir = os.listdir(datapath + 'spam')
-    spamcount = len(spamdir)
-    hamdir = os.listdir(datapath + 'ham')
-    hamcount = len(hamdir)
-    for i in trange(int(spamcount/5), desc='test-spam'):
-        copyfile(datapath + 'spam/' + spamdir[i], datapath + 'test/' + spamdir[i]+'.spam')
-    for i in trange(int(hamcount/5), desc='test-ham '):
-        copyfile(datapath + 'ham/' + hamdir[i], datapath + 'test/' + hamdir[i]+'.ham')
+#     spamdir = os.listdir(datapath + 'spam')
+#     spamcount = len(spamdir)
+#     hamdir = os.listdir(datapath + 'ham')
+#     hamcount = len(hamdir)
+#     for i in trange(int(spamcount/5), desc='test-spam'):
+#         copyfile(datapath + 'spam/' + spamdir[i], datapath + 'test/' + spamdir[i]+'.spam')
+#     for i in trange(int(hamcount/5), desc='test-ham '):
+#         copyfile(datapath + 'ham/' + hamdir[i], datapath + 'test/' + hamdir[i]+'.ham')
 
-    #now get train and split 80:20 (ie every fifth goes to dev)
-    for i in tqdm(range(int(spamcount/5), spamcount), desc='train-spam'):
-        if i % 5 == 0:
-            copyfile(datapath + 'spam/' + spamdir[i], datapath + 'dev/' + spamdir[i]+'.spam')
-        else:
-            copyfile(datapath + 'spam/' + spamdir[i], datapath + 'train/' + spamdir[i]+'.spam')
+#     #now get train and split 80:20 (ie every fifth goes to dev)
+#     for i in tqdm(range(int(spamcount/5), spamcount), desc='train-spam'):
+#         if i % 5 == 0:
+#             copyfile(datapath + 'spam/' + spamdir[i], datapath + 'dev/' + spamdir[i]+'.spam')
+#         else:
+#             copyfile(datapath + 'spam/' + spamdir[i], datapath + 'train/' + spamdir[i]+'.spam')
 
-    for i in tqdm(range(int(hamcount/5), hamcount), desc='train-ham'):
-        if i % 5 == 0:
-            copyfile(datapath + 'ham/' + hamdir[i], datapath + 'dev/' + hamdir[i]+'.ham')
-        else:
-            copyfile(datapath + 'ham/' + hamdir[i], datapath + 'train/' + hamdir[i]+'.ham')
+#     for i in tqdm(range(int(hamcount/5), hamcount), desc='train-ham'):
+#         if i % 5 == 0:
+#             copyfile(datapath + 'ham/' + hamdir[i], datapath + 'dev/' + hamdir[i]+'.ham')
+#         else:
+#             copyfile(datapath + 'ham/' + hamdir[i], datapath + 'train/' + hamdir[i]+'.ham')
 
 def get_first_occ(list, val):
     for i in range(len(list)):

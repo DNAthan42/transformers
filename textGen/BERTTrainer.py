@@ -7,6 +7,7 @@ import numpy as np
 import datetime
 import time
 from shutil import copyfile
+import pickle
 
 from transformers import TransfoXLConfig, TransfoXLLMHeadModel, TransfoXLTokenizer
 from transformers import GPT2Config, GPT2LMHeadModel, GPT2Tokenizer
@@ -52,6 +53,43 @@ def split_data(datapath):
             copyfile(datapath + 'ham/' + hamdir[i], datapath + 'dev/' + hamdir[i]+'.ham')
         else:
             copyfile(datapath + 'ham/' + hamdir[i], datapath + 'train/' + hamdir[i]+'.ham')
+
+def tokenize_all(args):
+    if args.cont:
+        print(args.cont_path)
+        model = BertForSequenceClassification.from_pretrained(args.cont_path)
+        tokenizer = BertTokenizer.from_pretrained(args.cont_path)
+    else:
+        model = BertForSequenceClassification.from_pretrained('bert-base-uncased')
+        tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+
+    datapath = fixpath(args.datapath)
+    outpath = fixpath(args.outpath)
+
+    if not os.path.exists(outpath):
+        os.makedirs(outpath)
+
+    # Load all messages into ram
+    messages = []
+    labels = []
+    masks = []
+
+    files = os.listdir(datapath)
+    with tqdm(total=len(files)) as pbar:
+        print("Loading Dataset")
+        for f in files:
+            tokens, label, mask = getMessage(datapath + f, tokenizer, args.batch_size != 1)
+            messages += [tokens]
+            labels += [label]
+            masks += [mask]
+            pbar.update(1)
+
+    with open(outpath + "messages.pickle", 'wb+') as fd:
+        pickle.dump(messages, fd)
+    with open(outpath + "labels.pickle", 'wb+') as fd:
+        pickle.dump(labels, fd)
+    with open(outpath + "masks.pickle", 'wb+') as fd:
+        pickle.dump(masks, fd)
 
 def get_first_occ(list, val):
     for i in range(len(list)):
@@ -125,8 +163,60 @@ def getBatch(datapath, batch_size, tokenizer):
             batch_l = []
             label_l = []
             pad_s_l = []
-        
-            
+
+
+def spam_file_man(datapath, batch_size, tokenizer):
+    datapath = fixpath(datapath)
+
+    # Load all messages into ram
+    messages = []
+    labels = []
+    masks = []
+
+    # files = os.listdir(datapath)
+    # with tqdm(total=len(files)) as pbar:
+    #     print("Loading Dataset")
+    #     for f in files:
+    #         tokens, label, mask = getMessage(datapath + f, tokenizer, batch_size != 1)
+    #         messages += [tokens]
+    #         labels += [label]
+    #         masks += [mask]
+    #         pbar.update(1)
+
+    # yield None
+
+    with open(datapath + "messages.pickle", 'rb') as fd:
+        messages = pickle.load(fd)
+        # print(tokenizer.decode(messages[0]))
+    with open(datapath + "labels.pickle", 'rb') as fd:
+        labels = pickle.load(fd)
+        # print(labels)
+    with open(datapath + "masks.pickle", 'rb') as fd:
+        masks = pickle.load(fd)
+        # print(masks[0])
+
+    # Generator that returns batches from ram.
+    batch = []
+    b_labels = [] # labels for batch
+    b_masks = [] # masks for batch
+
+    print(len(messages))
+    for i in range(len(messages)):
+        batch += [messages[i]]
+        b_labels += [labels[i]]
+        b_masks += [masks[i]]
+
+        # increment i by one to fix off by one.
+        # take batch_size == 4
+        # 0,1,2,3 in batch 1. 4,5,6,7 in batch two.
+        if (i + 1) % batch_size == 0:
+            yield batch, b_labels, b_masks
+            batch = b_labels = b_masks = []
+    
+    #catch leftover if batch_size doesn't divide len(messages)
+    if len(batch) != 0:
+        yield batch, b_labels, b_masks
+
 
 def train(datapath, outpath, seed, batch_size, epochs, save_steps, args, use_cuda = True):
     #set up model and device (hopefully cuda)
@@ -145,7 +235,7 @@ def train(datapath, outpath, seed, batch_size, epochs, save_steps, args, use_cud
         model = BertForSequenceClassification.from_pretrained('bert-base-uncased')
         tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
     model.to(device)
-    optimizer = torch.optim.Adam(model.parameters(), betas=(.9,.999), eps=2e-05)
+    optimizer = torch.optim.Adam(model.parameters(), betas=(.9,.999), lr=2e-05)
     
     #setup rng seeds on all devices to ensure repeatable results
     np.random.seed(seed)
@@ -153,7 +243,9 @@ def train(datapath, outpath, seed, batch_size, epochs, save_steps, args, use_cud
     torch.cuda.manual_seed_all(seed)
 
     num_batches = len(os.listdir(datapath)) / batch_size
-    batch_list = getBatch(datapath, batch_size, tokenizer)
+    # batch_list = getBatch(datapath, batch_size, tokenizer)
+    batch_list = spam_file_man(datapath, batch_size, tokenizer)
+    next(batch_list)
 
     avg_losses = []
     avg_loss = 0
@@ -222,13 +314,26 @@ def evaluate(args):
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
 
+    h = 0
+    s = 0
+    n = 0
+    for f in os.listdir(args.datapath):
+        if f.endswith("ham"):
+            h+=1
+        elif f.endswith("spam"):
+            s += 1
+        else:
+            n += 1
+
+    print(f"{h} {s} {n}")
+
     TP = 0
     TN = 0
     T1 = 0
     T2 = 0
 
-    for _ in trange(len(os.listdir(datapath))):
-        batch_list = getBatch(args.datapath, 1, tokenizer)
+    batch_list = getBatch(args.datapath, 1, tokenizer)
+    for _ in trange(len(os.listdir(args.datapath))):
 
         batch, labels, masks = next(batch_list)
         inputs = torch.tensor(batch, dtype=torch.long, device=device)
@@ -252,12 +357,10 @@ def evaluate(args):
             if labels[0] == 1: # expect spam
                 if loss == 1:
                     TN += 1
-                else
+                else:
                     T1 += 1
 
-            print(select(loss))
-
-            print(f"expected : produced -- {labels[0]} : {loss}")
+            # print(f"expected : produced -- {labels[0]} : {loss}")
             # print("message:\n" + tokenizer.decode(inputs[0].tolist()))
     
     print(f"TP: {TP}\tTN:{TN}\tT1: {T1}\tT2: {T2}")
@@ -291,6 +394,8 @@ def main():
 
     parser.add_argument("--eval", action="store_true")
 
+    parser.add_argument("--toke", action='store_true')
+
     args = parser.parse_args()
 
     # more arg checking. Make sure we can save models. Don't waste the training time
@@ -300,6 +405,9 @@ def main():
     if args.eval:
         evaluate(args)
         return # end early, don't train after testing.
+    elif args.toke:
+        tokenize_all(args)
+        return
 
     if not os.path.exists(args.outpath):
         os.mkdir(args.outpath)
